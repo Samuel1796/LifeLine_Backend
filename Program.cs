@@ -33,7 +33,7 @@ builder.Services.AddSignalR();
 builder.Services.AddScoped<TokenService>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite(builder.Configuration.GetConnectionString("Default")));
+    options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 
 // In production set FRONTEND_ORIGINS to the deployed frontend URL(s),
 // comma-separated, e.g. "https://lifeline.vercel.app".
