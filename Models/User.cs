@@ -12,7 +12,7 @@ public class User
     [MaxLength(200)]
     public string Email { get; set; } = string.Empty;
 
-    [MaxLength(60)]
+    [MaxLength(100)]
     public string PasswordHash { get; set; } = string.Empty;
 
     [MaxLength(10)]
