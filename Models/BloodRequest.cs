@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace BloodDonorFinder.Api.Models;
 
 public class BloodRequest
@@ -6,21 +8,32 @@ public class BloodRequest
     public int RequesterId { get; set; }
     public User Requester { get; set; } = null!;
 
+    [MaxLength(4)]
     public string BloodType { get; set; } = string.Empty;
+
+    [MaxLength(100)]
     public string PatientName { get; set; } = string.Empty;
+
+    [MaxLength(200)]
     public string? HospitalName { get; set; }
+
+    [MaxLength(8)]
     public string Urgency { get; set; } = UrgencyLevels.Medium;
+
+    [MaxLength(10)]
     public string Status { get; set; } = RequestStatuses.Open;
+
+    [MaxLength(1000)]
     public string? Notes { get; set; }
 
     public double Latitude { get; set; }
     public double Longitude { get; set; }
+
+    [MaxLength(100)]
     public string? City { get; set; }
 
     public int UnitsNeeded { get; set; } = 1;
 
-    // When set, this request was sent directly to one specific donor
-    // instead of being broadcast to everyone matched nearby.
     public int? DirectedDonorId { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

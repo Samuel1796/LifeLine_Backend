@@ -1,3 +1,5 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace BloodDonorFinder.Api.Models;
 
 public class DonorProfile
@@ -6,13 +8,18 @@ public class DonorProfile
     public int UserId { get; set; }
     public User User { get; set; } = null!;
 
+    [MaxLength(4)]
     public string BloodType { get; set; } = string.Empty;
+
     public double Latitude { get; set; }
     public double Longitude { get; set; }
+
+    [MaxLength(100)]
     public string? City { get; set; }
+
     public bool IsAvailable { get; set; } = true;
     public bool IsAnonymous { get; set; }
-    public DateTime? LastDonationDate { get; set; }
+    public DateOnly? LastDonationDate { get; set; }
 }
 
 public static class BloodTypes

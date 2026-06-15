@@ -9,7 +9,7 @@ public record DonorProfileDto(
     string? City,
     bool IsAvailable,
     bool IsAnonymous,
-    DateTime? LastDonationDate
+    DateOnly? LastDonationDate
 );
 
 public record DonorProfileResponseDto(
@@ -21,7 +21,7 @@ public record DonorProfileResponseDto(
     string? City,
     bool IsAvailable,
     bool IsAnonymous,
-    DateTime? LastDonationDate
+    DateOnly? LastDonationDate
 );
 
 public record AvailabilityDto(bool IsAvailable);
