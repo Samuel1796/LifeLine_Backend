@@ -1,59 +1,43 @@
-using BloodDonorFinder.Api.Models;
 using Microsoft.EntityFrameworkCore;
+using Nook.Api.Models;
 
-namespace BloodDonorFinder.Api.Data;
+namespace Nook.Api.Data;
 
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
     public DbSet<User> Users => Set<User>();
-    public DbSet<DonorProfile> DonorProfiles => Set<DonorProfile>();
-    public DbSet<BloodRequest> BloodRequests => Set<BloodRequest>();
-    public DbSet<DonorResponse> DonorResponses => Set<DonorResponse>();
-    public DbSet<Message> Messages => Set<Message>();
+    public DbSet<Office> Offices => Set<Office>();
+    public DbSet<Workspace> Workspaces => Set<Workspace>();
+    public DbSet<Booking> Bookings => Set<Booking>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        // Nook lives in its own schema so it can share a database (e.g. on
+        // Render) without touching tables in "public".
+        modelBuilder.HasDefaultSchema("nook");
+
         modelBuilder.Entity<User>()
             .HasIndex(u => u.Email)
             .IsUnique();
 
-        modelBuilder.Entity<User>()
-            .HasOne(u => u.DonorProfile)
-            .WithOne(p => p.User)
-            .HasForeignKey<DonorProfile>(p => p.UserId);
+        modelBuilder.Entity<Workspace>()
+            .HasOne(w => w.Office)
+            .WithMany(o => o.Workspaces)
+            .HasForeignKey(w => w.OfficeId);
 
-        modelBuilder.Entity<BloodRequest>()
-            .HasOne(r => r.Requester)
+        modelBuilder.Entity<Booking>()
+            .HasOne(b => b.Workspace)
             .WithMany()
-            .HasForeignKey(r => r.RequesterId);
+            .HasForeignKey(b => b.WorkspaceId);
 
-        modelBuilder.Entity<DonorResponse>()
-            .HasOne(r => r.BloodRequest)
-            .WithMany(b => b.Responses)
-            .HasForeignKey(r => r.BloodRequestId);
-
-        modelBuilder.Entity<DonorResponse>()
-            .HasOne(r => r.Donor)
+        modelBuilder.Entity<Booking>()
+            .HasOne(b => b.User)
             .WithMany()
-            .HasForeignKey(r => r.DonorId);
-
-        // A donor can only respond once per request
-        modelBuilder.Entity<DonorResponse>()
-            .HasIndex(r => new { r.BloodRequestId, r.DonorId })
-            .IsUnique();
-
-        modelBuilder.Entity<Message>()
-            .HasOne(m => m.BloodRequest)
-            .WithMany()
-            .HasForeignKey(m => m.BloodRequestId);
-
-        modelBuilder.Entity<Message>()
-            .HasOne(m => m.Sender)
-            .WithMany()
-            .HasForeignKey(m => m.SenderId)
+            .HasForeignKey(b => b.UserId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        modelBuilder.Entity<Message>()
-            .HasIndex(m => new { m.BloodRequestId, m.DonorId });
+        // Speeds up overlap checks and per-day listings for a workspace.
+        modelBuilder.Entity<Booking>()
+            .HasIndex(b => new { b.WorkspaceId, b.StartsAt });
     }
 }

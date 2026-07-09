@@ -1,6 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace BloodDonorFinder.Api.Models;
+namespace Nook.Api.Models;
 
 public class User
 {
@@ -12,22 +12,20 @@ public class User
     [MaxLength(200)]
     public string Email { get; set; } = string.Empty;
 
-    [MaxLength(100)]
+    [MaxLength(200)]
     public string PasswordHash { get; set; } = string.Empty;
 
-    [MaxLength(10)]
-    public string Role { get; set; } = Roles.Donor;
+    [MaxLength(20)]
+    public string Role { get; set; } = Roles.Employee;
 
-    [MaxLength(30)]
-    public string? Phone { get; set; }
+    [MaxLength(80)]
+    public string? Department { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
-
-    public DonorProfile? DonorProfile { get; set; }
 }
 
 public static class Roles
 {
-    public const string Donor = "Donor";
-    public const string Requester = "Requester";
+    public const string Employee = "Employee";
+    public const string Manager = "Manager";
 }

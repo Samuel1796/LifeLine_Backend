@@ -2,7 +2,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
-COPY BloodDonorFinder.Api.csproj .
+COPY Nook.Api.csproj .
 RUN dotnet restore
 
 COPY . .
@@ -13,9 +13,8 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 COPY --from=build /app/publish .
 
-# Default SQLite location; mount a volume at /app/data to persist across deploys.
-RUN mkdir -p /app/data
-ENV ConnectionStrings__Default="Data Source=/app/data/blooddonor.db"
+# Provide the Postgres connection string at runtime, e.g.
+# ConnectionStrings__Default="Host=...;Port=5432;Database=nook;Username=...;Password=..."
 
 EXPOSE 8080
-ENTRYPOINT ["dotnet", "BloodDonorFinder.Api.dll"]
+ENTRYPOINT ["dotnet", "Nook.Api.dll"]

@@ -1,13 +1,13 @@
 using System.ComponentModel.DataAnnotations;
 
-namespace BloodDonorFinder.Api.Dtos;
+namespace Nook.Api.Dtos;
 
 public record RegisterDto(
-    [Required, MinLength(2)] string FullName,
-    [Required, EmailAddress] string Email,
-    [Required, MinLength(6)] string Password,
+    [Required, MinLength(2), MaxLength(100)] string FullName,
+    [Required, EmailAddress, MaxLength(200)] string Email,
+    [Required, MinLength(6), MaxLength(100)] string Password,
     [Required] string Role,
-    string? Phone
+    [MaxLength(80)] string? Department
 );
 
 public record LoginDto(
@@ -17,4 +17,4 @@ public record LoginDto(
 
 public record AuthResponseDto(string Token, UserDto User);
 
-public record UserDto(int Id, string FullName, string Email, string Role, string? Phone);
+public record UserDto(int Id, string FullName, string Email, string Role, string? Department);

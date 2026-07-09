@@ -1,10 +1,13 @@
 using System.Text;
-using BloodDonorFinder.Api.Data;
-using BloodDonorFinder.Api.Hubs;
-using BloodDonorFinder.Api.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.IdentityModel.Tokens;
+using Nook.Api.Data;
+using Nook.Api.Hubs;
+using Nook.Api.Services;
 
 // Load KEY=VALUE pairs from a local .env file (kept out of source control)
 // into environment variables before configuration is built.
@@ -28,7 +31,19 @@ var port = Environment.GetEnvironmentVariable("PORT");
 if (!string.IsNullOrEmpty(port))
     builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
-builder.Services.AddControllers();
+builder.Services.AddControllers().ConfigureApiBehaviorOptions(options =>
+{
+    // The API contract shapes every error as { "error": string }.
+    options.InvalidModelStateResponseFactory = context =>
+    {
+        var firstError = context.ModelState
+            .Where(kv => kv.Value is { Errors.Count: > 0 })
+            .SelectMany(kv => kv.Value!.Errors)
+            .Select(e => string.IsNullOrWhiteSpace(e.ErrorMessage) ? "Invalid request." : e.ErrorMessage)
+            .FirstOrDefault() ?? "Invalid request.";
+        return new BadRequestObjectResult(new { error = firstError });
+    };
+});
 builder.Services.AddSignalR();
 builder.Services.AddScoped<TokenService>();
 
@@ -36,7 +51,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
 
 // In production set FRONTEND_ORIGINS to the deployed frontend URL(s),
-// comma-separated, e.g. "https://lifeline.vercel.app".
+// comma-separated, e.g. "https://nook.vercel.app".
 var corsOrigins = (builder.Configuration["FRONTEND_ORIGINS"] ?? "http://localhost:5173")
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
@@ -86,7 +101,50 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
+    var creator = db.Database.GetService<IRelationalDatabaseCreator>();
+
+    if (!creator.Exists())
+    {
+        // Fresh database (e.g. local dev): create database, schema and tables.
+        db.Database.EnsureCreated();
+    }
+    else
+    {
+        // Existing, possibly shared database (e.g. Render): leave other
+        // schemas untouched and create the "nook" schema + tables if missing.
+        db.Database.ExecuteSqlRaw("CREATE SCHEMA IF NOT EXISTS nook");
+
+        var hasAnyTables = db.Database
+            .SqlQueryRaw<int>(
+                "SELECT COUNT(*)::int AS \"Value\" FROM information_schema.tables WHERE table_schema = 'nook'")
+            .AsEnumerable()
+            .First() > 0;
+
+        // Rev 2 renamed the "Floors" table/entity to "Offices" (and Workspace's
+        // FloorId FK to OfficeId). That's not a compatible in-place shape change,
+        // and there are no EF migrations in this project (tables are created
+        // directly from the model). If the schema still has the old Rev 1 shape
+        // (no "Offices" table), drop and recreate everything under "nook" —
+        // this holds only pre-production seed/demo data, so resetting it is safe.
+        var hasOfficesTable = db.Database
+            .SqlQueryRaw<int>(
+                "SELECT COUNT(*)::int AS \"Value\" FROM information_schema.tables " +
+                "WHERE table_schema = 'nook' AND table_name = 'Offices'")
+            .AsEnumerable()
+            .First() > 0;
+
+        if (hasAnyTables && !hasOfficesTable)
+        {
+            db.Database.ExecuteSqlRaw("DROP SCHEMA nook CASCADE");
+            db.Database.ExecuteSqlRaw("CREATE SCHEMA nook");
+            creator.CreateTables();
+        }
+        else if (!hasAnyTables)
+        {
+            creator.CreateTables();
+        }
+    }
+
     DbSeeder.Seed(db);
 }
 

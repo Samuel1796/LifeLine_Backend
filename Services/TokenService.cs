@@ -1,10 +1,10 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
-using BloodDonorFinder.Api.Models;
 using Microsoft.IdentityModel.Tokens;
+using Nook.Api.Models;
 
-namespace BloodDonorFinder.Api.Services;
+namespace Nook.Api.Services;
 
 public class TokenService(IConfiguration config)
 {
@@ -14,7 +14,6 @@ public class TokenService(IConfiguration config)
         {
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new(ClaimTypes.Name, user.FullName),
-            new(ClaimTypes.Email, user.Email),
             new(ClaimTypes.Role, user.Role),
         };
 

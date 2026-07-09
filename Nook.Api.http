@@ -1,0 +1,107 @@
+@host = http://localhost:5000
+@token = paste-a-token-here
+
+### Register a new account (role: Employee | Manager)
+POST {{host}}/api/auth/register
+Content-Type: application/json
+
+{
+  "fullName": "Yaa Mensah",
+  "email": "yaa@demo.com",
+  "password": "Password123!",
+  "role": "Employee",
+  "department": "Marketing"
+}
+
+### Login as the seeded manager
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "manager@demo.com",
+  "password": "Password123!"
+}
+
+### Login as a seeded employee
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "ama@demo.com",
+  "password": "Password123!"
+}
+
+### List offices
+GET {{host}}/api/offices
+Authorization: Bearer {{token}}
+
+### List spaces with availability for the default window (now -> now+1h)
+GET {{host}}/api/spaces
+Authorization: Bearer {{token}}
+
+### List spaces for a specific window, filtered by office
+GET {{host}}/api/spaces?from=2026-07-08T10:00:00Z&to=2026-07-08T11:00:00Z&officeId=1
+Authorization: Bearer {{token}}
+
+### List spaces including deactivated ones (Manager only; ignored for others)
+GET {{host}}/api/spaces?includeInactive=true
+Authorization: Bearer {{token}}
+
+### Space detail with a day's confirmed bookings
+GET {{host}}/api/spaces/3?date=2026-07-08
+Authorization: Bearer {{token}}
+
+### Create a space (Manager only)
+POST {{host}}/api/spaces
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "officeId": 1,
+  "name": "Phone Booth",
+  "type": "Desk",
+  "capacity": 1,
+  "amenities": ["Standing"]
+}
+
+### Update a space (Manager only)
+PUT {{host}}/api/spaces/28
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "officeId": 1,
+  "name": "Phone Booth",
+  "type": "Desk",
+  "capacity": 1,
+  "amenities": ["Standing", "Window"],
+  "isActive": true
+}
+
+### Occupancy summary (Manager only)
+GET {{host}}/api/spaces/occupancy?date=2026-07-08
+Authorization: Bearer {{token}}
+
+### Create a booking (409 if the window overlaps a confirmed booking)
+POST {{host}}/api/bookings
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "workspaceId": 5,
+  "startsAt": "2026-07-08T13:00:00Z",
+  "endsAt": "2026-07-08T14:00:00Z",
+  "note": "Afternoon focus"
+}
+
+### My bookings (upcoming / past)
+GET {{host}}/api/bookings/mine
+Authorization: Bearer {{token}}
+
+### All bookings for a day (Manager only)
+GET {{host}}/api/bookings/all?date=2026-07-08
+Authorization: Bearer {{token}}
+
+### Cancel a booking (owner or Manager)
+PATCH {{host}}/api/bookings/1/cancel
+Authorization: Bearer {{token}}
