@@ -19,12 +19,13 @@ public class BookingsController(AppDbContext db, IHubContext<NotificationHub> hu
     private static readonly TimeSpan PastGrace = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan MaxDuration = TimeSpan.FromHours(12);
 
-    // POST /api/bookings — { workspaceId, startsAt, endsAt, note? } → 201, or 409 on overlap.
+    // POST /api/bookings — { workspaceId, startsAt, endsAt, note?, replaceBookingId? } → 201, or 409 on overlap.
     [HttpPost]
     public async Task<IActionResult> Create(CreateBookingDto dto)
     {
         var startsUtc = dto.StartsAt!.Value.UtcDateTime;
         var endsUtc = dto.EndsAt!.Value.UtcDateTime;
+        var userId = CurrentUserId();
 
         if (endsUtc <= startsUtc)
             return BadRequest(new { error = "EndsAt must be after StartsAt." });
@@ -49,11 +50,98 @@ public class BookingsController(AppDbContext db, IHubContext<NotificationHub> hu
         if (overlaps)
             return Conflict(new { error = $"{workspace.Name} is already booked for that time." });
 
+        // Same-user overlap guard: one person can't hold overlapping bookings on two different desks.
+        var ownConflict = await db.Bookings
+            .Include(b => b.Workspace)
+            .Where(b => b.UserId == userId
+                && b.WorkspaceId != workspace.Id
+                && b.Status == BookingStatus.Confirmed
+                && b.StartsAt < endsUtc
+                && b.EndsAt > startsUtc)
+            .FirstOrDefaultAsync();
+
+        if (ownConflict is not null)
+        {
+            // If the client asked to replace a specific booking, re-verify server-side that it's
+            // actually eligible (owned by this user, still Confirmed, and really overlaps) before
+            // trusting it — otherwise treat it as if no override was supplied.
+            Booking? replacing = null;
+            if (dto.ReplaceBookingId.HasValue)
+            {
+                var candidate = await db.Bookings
+                    .Include(b => b.Workspace)
+                    .FirstOrDefaultAsync(b => b.Id == dto.ReplaceBookingId.Value);
+                if (candidate is not null
+                    && candidate.UserId == userId
+                    && candidate.Status == BookingStatus.Confirmed
+                    && candidate.StartsAt < endsUtc
+                    && candidate.EndsAt > startsUtc)
+                {
+                    replacing = candidate;
+                }
+            }
+
+            if (replacing is null)
+            {
+                return Conflict(new
+                {
+                    error = $"You already have {ownConflict.Workspace.Name} booked " +
+                             $"{ownConflict.StartsAt.ToLocalTime():HH:mm}–{ownConflict.EndsAt.ToLocalTime():HH:mm}, " +
+                             "which overlaps this time.",
+                    code = "OwnBookingConflict",
+                    conflictingBooking = new
+                    {
+                        id = ownConflict.Id,
+                        workspaceName = ownConflict.Workspace.Name,
+                        startsAt = ownConflict.StartsAt,
+                        endsAt = ownConflict.EndsAt,
+                    },
+                });
+            }
+
+            var replaceNote = string.IsNullOrWhiteSpace(dto.Note) ? null : dto.Note.Trim();
+            var replacement = new Booking
+            {
+                WorkspaceId = workspace.Id,
+                UserId = userId,
+                StartsAt = startsUtc,
+                EndsAt = endsUtc,
+                Note = replaceNote,
+            };
+
+            await using var transaction = await db.Database.BeginTransactionAsync();
+
+            replacing.Status = BookingStatus.Cancelled;
+            db.Bookings.Add(replacement);
+            await db.SaveChangesAsync();
+
+            await transaction.CommitAsync();
+
+            await hub.Clients.All.SendAsync("bookingCancelled", new
+            {
+                workspaceId = replacing.WorkspaceId,
+                workspaceName = replacing.Workspace.Name,
+                bookingId = replacing.Id,
+                startsAt = replacing.StartsAt,
+                endsAt = replacing.EndsAt,
+            });
+
+            await hub.Clients.All.SendAsync("spaceBooked", new
+            {
+                workspaceId = workspace.Id,
+                workspaceName = workspace.Name,
+                startsAt = replacement.StartsAt,
+                endsAt = replacement.EndsAt,
+            });
+
+            return Created($"/api/bookings/{replacement.Id}", ToDto(replacement, workspace));
+        }
+
         var note = string.IsNullOrWhiteSpace(dto.Note) ? null : dto.Note.Trim();
         var booking = new Booking
         {
             WorkspaceId = workspace.Id,
-            UserId = CurrentUserId(),
+            UserId = userId,
             StartsAt = startsUtc,
             EndsAt = endsUtc,
             Note = note,

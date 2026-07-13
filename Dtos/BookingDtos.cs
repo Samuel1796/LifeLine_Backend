@@ -6,7 +6,8 @@ public record CreateBookingDto(
     [Required] int? WorkspaceId,
     [Required] DateTimeOffset? StartsAt,
     [Required] DateTimeOffset? EndsAt,
-    [MaxLength(200)] string? Note
+    [MaxLength(200)] string? Note,
+    int? ReplaceBookingId
 );
 
 public record BookingWorkspaceDto(int Id, string Name, string Type, string OfficeName);
