@@ -15,10 +15,14 @@ COPY --from=build /app/publish .
 
 # REQUIRED at runtime — backend/.env is excluded by .dockerignore, so the
 # connection string must come from the container's environment. Use a hostname
-# that resolves from inside the container (a managed database's *external*
-# hostname, not a provider-internal one, unless this runs in the same network):
-#   ConnectionStrings__Default="Host=...;Port=5432;Database=nook;Username=...;Password=...;SSL Mode=Require;Trust Server Certificate=true"
-# The app exits with a clear log line if it's missing or unreachable.
+# that resolves from inside the container: a managed database's *external*
+# hostname, not a provider-internal one (Render's "dpg-...-a" resolves only
+# within its own region, and not at all from outside Render). Either form works:
+#   ConnectionStrings__Default="Host=...;Port=5432;Database=...;Username=...;Password=...;SSL Mode=Require"
+#   DATABASE_URL="postgresql://user:pass@host.oregon-postgres.render.com/dbname"
+# ConnectionStrings__Default is read first and shadows DATABASE_URL if both are
+# set. The app logs the host it resolved, then exits with a clear line if that
+# host is missing or unreachable rather than crash-looping on a stack trace.
 
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "Nook.Api.dll"]
