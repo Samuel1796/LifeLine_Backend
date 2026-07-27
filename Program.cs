@@ -287,8 +287,6 @@ static bool TryResolveDatabaseUrl(string? rawValue, out string connectionString)
 
         if (key.Equals("sslmode", StringComparison.OrdinalIgnoreCase) && Enum.TryParse<SslMode>(value, ignoreCase: true, out var sslMode))
             builder.SslMode = sslMode;
-        else if (key.Equals("trustservercertificate", StringComparison.OrdinalIgnoreCase) && bool.TryParse(value, out var trustServerCertificate))
-            builder.TrustServerCertificate = trustServerCertificate;
         else if (key.Equals("timeout", StringComparison.OrdinalIgnoreCase) && int.TryParse(value, out var timeout))
             builder.Timeout = timeout;
         else if (key.Equals("commandtimeout", StringComparison.OrdinalIgnoreCase) && int.TryParse(value, out var commandTimeout))
