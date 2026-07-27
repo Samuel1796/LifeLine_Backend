@@ -13,8 +13,12 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 COPY --from=build /app/publish .
 
-# Provide the Postgres connection string at runtime, e.g.
-# ConnectionStrings__Default="Host=...;Port=5432;Database=nook;Username=...;Password=..."
+# REQUIRED at runtime — backend/.env is excluded by .dockerignore, so the
+# connection string must come from the container's environment. Use a hostname
+# that resolves from inside the container (a managed database's *external*
+# hostname, not a provider-internal one, unless this runs in the same network):
+#   ConnectionStrings__Default="Host=...;Port=5432;Database=nook;Username=...;Password=...;SSL Mode=Require;Trust Server Certificate=true"
+# The app exits with a clear log line if it's missing or unreachable.
 
 EXPOSE 8080
 ENTRYPOINT ["dotnet", "Nook.Api.dll"]

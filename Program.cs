@@ -1,3 +1,4 @@
+using System.Net.Sockets;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
@@ -8,6 +9,7 @@ using Microsoft.IdentityModel.Tokens;
 using Nook.Api.Data;
 using Nook.Api.Hubs;
 using Nook.Api.Services;
+using Npgsql;
 
 // Load KEY=VALUE pairs from a local .env file (kept out of source control)
 // into environment variables before configuration is built.
@@ -47,8 +49,20 @@ builder.Services.AddControllers().ConfigureApiBehaviorOptions(options =>
 builder.Services.AddSignalR();
 builder.Services.AddScoped<TokenService>();
 
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("Default")));
+// The real connection string lives in backend/.env locally, which .dockerignore
+// keeps out of the image — so a container only has it if the host injects
+// ConnectionStrings__Default. Without it configuration silently falls back to the
+// localhost default in appsettings.json, which is never right in a container.
+var connectionString = builder.Configuration.GetConnectionString("Default");
+if (string.IsNullOrWhiteSpace(connectionString))
+{
+    Console.Error.WriteLine(
+        "Startup failed: no PostgreSQL connection string. Set the ConnectionStrings__Default " +
+        "environment variable (or ConnectionStrings:Default in appsettings.json).");
+    return 1;
+}
+
+builder.Services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionString));
 
 // In production set FRONTEND_ORIGINS to the deployed frontend URL(s),
 // comma-separated, e.g. "https://nook.vercel.app".
@@ -98,9 +112,72 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
-using (var scope = app.Services.CreateScope())
+// A managed database is often still coming up (or its DNS still propagating) when
+// the container starts, so retry before giving up. Letting the first failure escape
+// as an unhandled exception just crash-loops the container, and the raw Npgsql stack
+// trace never says which host it tried — so log that up front.
+var dbTarget = new NpgsqlConnectionStringBuilder(connectionString);
+const int maxDbAttempts = 5;
+
+app.Logger.LogInformation(
+    "Using PostgreSQL host {Host}:{Port}, database {Database}, user {Username}",
+    dbTarget.Host, dbTarget.Port, dbTarget.Database, dbTarget.Username);
+
+for (var attempt = 1; ; attempt++)
 {
-    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    try
+    {
+        using var scope = app.Services.CreateScope();
+        InitializeDatabase(scope.ServiceProvider.GetRequiredService<AppDbContext>());
+        break;
+    }
+    catch (Exception ex) when (IsConnectivityFailure(ex))
+    {
+        if (attempt == maxDbAttempts)
+        {
+            app.Logger.LogError(
+                "Could not reach PostgreSQL at {Host}:{Port} after {Attempts} attempts: {Message}{Hint}",
+                dbTarget.Host, dbTarget.Port, maxDbAttempts, InnermostMessage(ex), HintFor(ex, dbTarget.Host));
+            return 1;
+        }
+
+        var delay = TimeSpan.FromSeconds(attempt * 2);
+        app.Logger.LogWarning(
+            "PostgreSQL at {Host}:{Port} not reachable (attempt {Attempt}/{Attempts}): {Message}. Retrying in {Delay}s.",
+            dbTarget.Host, dbTarget.Port, attempt, maxDbAttempts, InnermostMessage(ex), delay.TotalSeconds);
+        Thread.Sleep(delay);
+    }
+    catch (Exception ex)
+    {
+        // Reached the server but couldn't initialize. Either way this won't fix
+        // itself on a restart, so report it in one line and exit rather than
+        // dumping a stack trace on every container restart.
+        if (AsPostgresException(ex) is { } postgres)
+            app.Logger.LogError(
+                "PostgreSQL at {Host}:{Port} rejected database {Database} as user {Username} ({SqlState}): {Message}",
+                dbTarget.Host, dbTarget.Port, dbTarget.Database, dbTarget.Username,
+                postgres.SqlState, postgres.MessageText);
+        else
+            app.Logger.LogError(ex, "Initializing the database at {Host}:{Port} failed.",
+                dbTarget.Host, dbTarget.Port);
+
+        return 1;
+    }
+}
+
+app.UseCors();
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapControllers();
+app.MapHub<NotificationHub>("/hubs/notifications");
+
+app.Run();
+return 0;
+
+// Creates the schema and tables when they're missing, then seeds demo data.
+static void InitializeDatabase(AppDbContext db)
+{
     var creator = db.Database.GetService<IRelationalDatabaseCreator>();
 
     if (!creator.Exists())
@@ -148,11 +225,48 @@ using (var scope = app.Services.CreateScope())
     DbSeeder.Seed(db);
 }
 
-app.UseCors();
-app.UseAuthentication();
-app.UseAuthorization();
+// True when the server was never reached (DNS, TCP, TLS, timeout). A
+// PostgresException means it answered — that's a config problem, not a blip,
+// so it isn't worth retrying.
+static bool IsConnectivityFailure(Exception exception)
+{
+    for (var e = exception; e is not null; e = e.InnerException)
+    {
+        if (e is PostgresException) return false;
+        if (e is NpgsqlException or SocketException or TimeoutException) return true;
+    }
 
-app.MapControllers();
-app.MapHub<NotificationHub>("/hubs/notifications");
+    return false;
+}
 
-app.Run();
+// EF sometimes wraps the server's error response, so search the whole chain.
+static PostgresException? AsPostgresException(Exception exception)
+{
+    for (var e = exception; e is not null; e = e.InnerException)
+        if (e is PostgresException postgres) return postgres;
+
+    return null;
+}
+
+// EF wraps the real cause two or three layers deep; only the innermost message
+// ("Name or service not known") says anything useful.
+static string InnermostMessage(Exception exception)
+{
+    var innermost = exception;
+    while (innermost.InnerException is not null) innermost = innermost.InnerException;
+    return innermost.Message.TrimEnd('.', ' ');
+}
+
+static string HintFor(Exception exception, string? host)
+{
+    for (var e = exception; e is not null; e = e.InnerException)
+    {
+        if (e is SocketException { SocketErrorCode: SocketError.HostNotFound or SocketError.NoData })
+            return $" Hostname '{host}' could not be resolved. Check that ConnectionStrings__Default " +
+                   "is set in the environment and uses an externally resolvable hostname — " +
+                   "backend/.env is excluded from the Docker image, so its value never reaches a " +
+                   "deployed container.";
+    }
+
+    return string.Empty;
+}
