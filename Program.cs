@@ -12,7 +12,9 @@ using Nook.Api.Services;
 using Npgsql;
 
 // Load KEY=VALUE pairs from a local .env file (kept out of source control)
-// into environment variables before configuration is built.
+// into environment variables before configuration is built. Values already
+// present in the real environment win: a host's dashboard setting must never be
+// overridden by a stale file that happens to be in the working directory.
 var envFile = Path.Combine(Directory.GetCurrentDirectory(), ".env");
 if (File.Exists(envFile))
 {
@@ -22,7 +24,9 @@ if (File.Exists(envFile))
         if (trimmed.Length == 0 || trimmed.StartsWith('#')) continue;
         var separator = trimmed.IndexOf('=');
         if (separator <= 0) continue;
-        Environment.SetEnvironmentVariable(trimmed[..separator].Trim(), trimmed[(separator + 1)..].Trim());
+        var key = trimmed[..separator].Trim();
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable(key))) continue;
+        Environment.SetEnvironmentVariable(key, trimmed[(separator + 1)..].Trim());
     }
 }
 
@@ -279,6 +283,8 @@ static bool TryResolveDatabaseUrl(string? rawValue, out string connectionString)
             builder.Password = Uri.UnescapeDataString(userInfo[1]);
     }
 
+    var sslModeSpecified = false;
+
     foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
     {
         var separator = pair.IndexOf('=');
@@ -286,16 +292,28 @@ static bool TryResolveDatabaseUrl(string? rawValue, out string connectionString)
         var value = Uri.UnescapeDataString(separator < 0 ? string.Empty : pair[(separator + 1)..]).Trim();
 
         if (key.Equals("sslmode", StringComparison.OrdinalIgnoreCase) && Enum.TryParse<SslMode>(value, ignoreCase: true, out var sslMode))
+        {
             builder.SslMode = sslMode;
+            sslModeSpecified = true;
+        }
         else if (key.Equals("timeout", StringComparison.OrdinalIgnoreCase) && int.TryParse(value, out var timeout))
             builder.Timeout = timeout;
         else if (key.Equals("commandtimeout", StringComparison.OrdinalIgnoreCase) && int.TryParse(value, out var commandTimeout))
             builder.CommandTimeout = commandTimeout;
     }
 
+    // Managed hosts publish their URL without an sslmode parameter but still
+    // require TLS. Require encrypts without validating the chain, which is what
+    // a provider-signed certificate needs here. A local database needs neither.
+    if (!sslModeSpecified && !IsLoopback(builder.Host))
+        builder.SslMode = SslMode.Require;
+
     connectionString = builder.ConnectionString;
     return true;
 }
+
+static bool IsLoopback(string? host) =>
+    host is "localhost" or "127.0.0.1" or "::1" or "[::1]";
 
 // True when the server was never reached (DNS, TCP, TLS, timeout). A
 // PostgresException means it answered — that's a config problem, not a blip,
