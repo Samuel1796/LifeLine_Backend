@@ -49,16 +49,14 @@ builder.Services.AddControllers().ConfigureApiBehaviorOptions(options =>
 builder.Services.AddSignalR();
 builder.Services.AddScoped<TokenService>();
 
-// The real connection string lives in backend/.env locally, which .dockerignore
-// keeps out of the image — so a container only has it if the host injects
-// ConnectionStrings__Default. Without it configuration silently falls back to the
-// localhost default in appsettings.json, which is never right in a container.
-var connectionString = builder.Configuration.GetConnectionString("Default");
+// In production the database must come from an explicit environment value.
+// Local development can still fall back to appsettings.json when .env is absent.
+var connectionString = ResolveConnectionString(builder.Configuration, builder.Environment);
 if (string.IsNullOrWhiteSpace(connectionString))
 {
     Console.Error.WriteLine(
-        "Startup failed: no PostgreSQL connection string. Set the ConnectionStrings__Default " +
-        "environment variable (or ConnectionStrings:Default in appsettings.json).");
+        "Startup failed: no PostgreSQL connection string. Set ConnectionStrings__Default or " +
+        "DATABASE_URL to an externally reachable PostgreSQL URL.");
     return 1;
 }
 
@@ -225,6 +223,82 @@ static void InitializeDatabase(AppDbContext db)
     DbSeeder.Seed(db);
 }
 
+static string? ResolveConnectionString(IConfiguration configuration, IHostEnvironment environment)
+{
+    if (TryResolveConnectionString(Environment.GetEnvironmentVariable("ConnectionStrings__Default"), out var connectionString))
+        return connectionString;
+
+    if (TryResolveDatabaseUrl(Environment.GetEnvironmentVariable("DATABASE_URL"), out connectionString))
+        return connectionString;
+
+    if (environment.IsDevelopment() && TryResolveConnectionString(configuration.GetConnectionString("Default"), out connectionString))
+        return connectionString;
+
+    return null;
+}
+
+static bool TryResolveConnectionString(string? rawValue, out string connectionString)
+{
+    connectionString = string.Empty;
+
+    if (string.IsNullOrWhiteSpace(rawValue))
+        return false;
+
+    if (rawValue.Contains("://", StringComparison.Ordinal))
+        return TryResolveDatabaseUrl(rawValue, out connectionString);
+
+    connectionString = rawValue;
+    return true;
+}
+
+static bool TryResolveDatabaseUrl(string? rawValue, out string connectionString)
+{
+    connectionString = string.Empty;
+
+    if (string.IsNullOrWhiteSpace(rawValue))
+        return false;
+
+    if (!Uri.TryCreate(rawValue, UriKind.Absolute, out var uri))
+        return false;
+
+    if (uri.Scheme is not ("postgres" or "postgresql"))
+        return false;
+
+    var builder = new NpgsqlConnectionStringBuilder
+    {
+        Host = uri.Host,
+        Port = uri.IsDefaultPort ? 5432 : uri.Port,
+        Database = uri.AbsolutePath.Trim('/'),
+    };
+
+    if (!string.IsNullOrWhiteSpace(uri.UserInfo))
+    {
+        var userInfo = uri.UserInfo.Split(':', 2);
+        builder.Username = Uri.UnescapeDataString(userInfo[0]);
+        if (userInfo.Length > 1)
+            builder.Password = Uri.UnescapeDataString(userInfo[1]);
+    }
+
+    foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+    {
+        var separator = pair.IndexOf('=');
+        var key = Uri.UnescapeDataString(separator < 0 ? pair : pair[..separator]).Trim();
+        var value = Uri.UnescapeDataString(separator < 0 ? string.Empty : pair[(separator + 1)..]).Trim();
+
+        if (key.Equals("sslmode", StringComparison.OrdinalIgnoreCase) && Enum.TryParse<SslMode>(value, ignoreCase: true, out var sslMode))
+            builder.SslMode = sslMode;
+        else if (key.Equals("trustservercertificate", StringComparison.OrdinalIgnoreCase) && bool.TryParse(value, out var trustServerCertificate))
+            builder.TrustServerCertificate = trustServerCertificate;
+        else if (key.Equals("timeout", StringComparison.OrdinalIgnoreCase) && int.TryParse(value, out var timeout))
+            builder.Timeout = timeout;
+        else if (key.Equals("commandtimeout", StringComparison.OrdinalIgnoreCase) && int.TryParse(value, out var commandTimeout))
+            builder.CommandTimeout = commandTimeout;
+    }
+
+    connectionString = builder.ConnectionString;
+    return true;
+}
+
 // True when the server was never reached (DNS, TCP, TLS, timeout). A
 // PostgresException means it answered — that's a config problem, not a blip,
 // so it isn't worth retrying.
@@ -262,10 +336,10 @@ static string HintFor(Exception exception, string? host)
     for (var e = exception; e is not null; e = e.InnerException)
     {
         if (e is SocketException { SocketErrorCode: SocketError.HostNotFound or SocketError.NoData })
-            return $" Hostname '{host}' could not be resolved. Check that ConnectionStrings__Default " +
-                   "is set in the environment and uses an externally resolvable hostname — " +
-                   "backend/.env is excluded from the Docker image, so its value never reaches a " +
-                   "deployed container.";
+            return $" Hostname '{host}' could not be resolved. Use the external PostgreSQL host " +
+                   "or set DATABASE_URL / ConnectionStrings__Default to the full externally reachable " +
+                   "connection string — backend/.env is excluded from the Docker image, so its value " +
+                   "never reaches a deployed container.";
     }
 
     return string.Empty;
