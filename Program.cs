@@ -230,16 +230,23 @@ static void InitializeDatabase(AppDbContext db)
 static string? ResolveConnectionString(IConfiguration configuration, IHostEnvironment environment)
 {
     if (TryResolveConnectionString(Environment.GetEnvironmentVariable("ConnectionStrings__Default"), out var connectionString))
-        return connectionString;
+        return WithoutGssEncryption(connectionString);
 
     if (TryResolveDatabaseUrl(Environment.GetEnvironmentVariable("DATABASE_URL"), out connectionString))
-        return connectionString;
+        return WithoutGssEncryption(connectionString);
 
     if (environment.IsDevelopment() && TryResolveConnectionString(configuration.GetConnectionString("Default"), out connectionString))
-        return connectionString;
+        return WithoutGssEncryption(connectionString);
 
     return null;
 }
+
+// Npgsql opens every connection with a GSS (Kerberos) encryption request by
+// default. Render's external PostgreSQL proxy drops the connection on it
+// ("Attempted to read past the end of the stream"), and the aspnet image has no
+// libgssapi_krb5 anyway. Nothing here uses Kerberos, so skip straight to TLS.
+static string WithoutGssEncryption(string connectionString) =>
+    new NpgsqlConnectionStringBuilder(connectionString) { GssEncryptionMode = GssEncryptionMode.Disable }.ConnectionString;
 
 static bool TryResolveConnectionString(string? rawValue, out string connectionString)
 {
